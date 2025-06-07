@@ -1,70 +1,42 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  RefreshControl,
-  Alert,
-  Linking,
-  Share,
-  Dimensions,
-} from 'react-native';
+// History.tsx
+import React, { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Alert, Linking, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MapPin, Calendar, Share2, ExternalLink, Trash2, RefreshCw, QrCode } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
-
-const { width } = Dimensions.get('window');
-
-interface ScanRecord {
-  id: number;
-  qr_data: string;
-  latitude: number | null;
-  longitude: number | null;
-  altitude: number | null;
-  accuracy: number | null;
-  timestamp: number;
-  created_at: string;
-}
+import * as _scansApi from '@/app/scans+api'; // Importación corregida
+import { ScanRecord } from '@/app/scans+api';
 
 export default function HistoryScreen() {
-  const [scans, setScans] = useState<ScanRecord[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [scans, setScans] = useState<_scansApi.ScanRecord[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
 
+  // Cargar scans al enfocar la pantalla
   useFocusEffect(
     useCallback(() => {
-      fetchScans();
+      loadScans();
     }, [])
   );
 
-  const fetchScans = async () => {
+  const loadScans = async () => {
     try {
-      setLoading(true);
-      const response = await fetch('/scans');
-      
-      if (response.ok) {
-        const data = await response.json();
-        setScans(data.scans || []);
-      } else {
-        console.error('Failed to fetch scans');
-      }
+      setRefreshing(true);
+      const data = await _scansApi.getScans(); // Llamada corregida
+      setScans(data);
     } catch (error) {
-      console.error('Error fetching scans:', error);
+      console.error('Failed to load scans:', error);
       Alert.alert('Error', 'No se pudieron cargar los escaneos');
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
   };
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchScans();
+    loadScans();
   };
 
-  const deleteScan = async (id: number) => {
+  const deleteScan = (id: number) => {
     Alert.alert(
       'Eliminar Escaneo',
       '¿Estás seguro de que quieres eliminar este escaneo?',
@@ -75,11 +47,8 @@ export default function HistoryScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const response = await fetch(`/scans/${id}`, {
-                method: 'DELETE',
-              });
-
-              if (response.ok) {
+              const success = await deleteScan(id);
+              if (success) {
                 setScans(prev => prev.filter(scan => scan.id !== id));
               } else {
                 Alert.alert('Error', 'No se pudo eliminar el escaneo');
@@ -145,14 +114,10 @@ export default function HistoryScreen() {
     <View style={styles.scanCard}>
       <View style={styles.scanHeader}>
         <View style={styles.scanInfo}>
-          <Text style={styles.scanData} numberOfLines={2}>
-            {item.qr_data}
-          </Text>
+          <Text style={styles.scanData} numberOfLines={2}>{item.qr_data}</Text>
           <View style={styles.scanMeta}>
             <Calendar size={14} color="#666" />
-            <Text style={styles.scanDate}>
-              {formatDate(item.timestamp)}
-            </Text>
+            <Text style={styles.scanDate}>{formatDate(item.timestamp)}</Text>
           </View>
           {(item.latitude && item.longitude) && (
             <View style={styles.scanMeta}>
@@ -164,24 +129,15 @@ export default function HistoryScreen() {
           )}
         </View>
         <View style={styles.actionButtons}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => shareQR(item.qr_data)}
-          >
+          <TouchableOpacity style={styles.actionButton} onPress={() => shareQR(item.qr_data)}>
             <Share2 size={18} color="#007AFF" />
           </TouchableOpacity>
           {isURL(item.qr_data) && (
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => openURL(item.qr_data)}
-            >
+            <TouchableOpacity style={styles.actionButton} onPress={() => openURL(item.qr_data)}>
               <ExternalLink size={18} color="#34C759" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => deleteScan(item.id)}
-          >
+          <TouchableOpacity style={styles.actionButton} onPress={() => deleteScan(item.id)}>
             <Trash2 size={18} color="#FF3B30" />
           </TouchableOpacity>
         </View>
@@ -196,7 +152,7 @@ export default function HistoryScreen() {
       <Text style={styles.emptyMessage}>
         Los códigos QR que escanees aparecerán aquí
       </Text>
-      <TouchableOpacity style={styles.refreshButton} onPress={fetchScans}>
+      <TouchableOpacity style={styles.refreshButton} onPress={loadScans}>
         <RefreshCw size={20} color="white" />
         <Text style={styles.refreshButtonText}>Actualizar</Text>
       </TouchableOpacity>
@@ -219,12 +175,7 @@ export default function HistoryScreen() {
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="#007AFF"
-            colors={['#007AFF']}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#007AFF" colors={['#007AFF']} />
         }
         ListEmptyComponent={renderEmpty}
       />

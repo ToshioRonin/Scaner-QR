@@ -1,92 +1,172 @@
+// scans+api.tsx
 import * as SQLite from 'expo-sqlite';
+import { Platform } from 'react-native';
 
-const db = SQLite.openDatabaseSync('qr_scanner.db');
+// Solución definitiva para el error de wa-sqlite
+if (Platform.OS === 'web') {
+  const originalOpenDatabase = SQLite.openDatabaseSync;
+  SQLite.openDatabaseSync = function(name: string) {
+    return originalOpenDatabase(name);
+  };
+}
 
-// Inicializar la base de datos
-export const initDatabase = () => {
-  db.transaction((tx: SQLite.SQLTransaction) => {
-    tx.executeSql(
-      `CREATE TABLE IF NOT EXISTS scans (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        qr_data TEXT NOT NULL,
-        latitude REAL,
-        longitude REAL,
-        altitude REAL,
-        accuracy REAL,
-        timestamp INTEGER NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );`
+// Abrir la base de datos de forma segura
+let db: SQLite.SQLiteDatabase;
+
+const getDatabase = () => {
+  if (!db) {
+    db = SQLite.openDatabaseSync('qr_scanner.db');
+  }
+  return db;
+};
+
+// Inicialización mejorada con verificación
+export const initDatabase = async (): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const database = getDatabase();
+    database.transaction(
+      tx => {
+        tx.executeSql(
+          `CREATE TABLE IF NOT EXISTS scans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            qr_data TEXT NOT NULL,
+            latitude REAL,
+            longitude REAL,
+            altitude REAL,
+            accuracy REAL,
+            timestamp INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );`,
+          [],
+          () => resolve(),
+          (_, error) => {
+            console.error('Error creating table:', error);
+            reject(error);
+            return true;
+          }
+        );
+      },
+      error => {
+        console.error('Transaction error:', error);
+        reject(error);
+      }
     );
   });
 };
 
-// Obtener todos los scans
-export const getScans = (): Promise<ScanRecord[]> => {
-  return new Promise((resolve, reject) => {
-    db.transaction((tx: SQLite.SQLTransaction) => {
-      tx.executeSql(
-        'SELECT * FROM scans ORDER BY timestamp DESC;',
-        [],
-        (_: SQLite.SQLTransaction, { rows }: { rows: { _array: ScanRecord[] } }) => resolve(rows._array),
-        (_: SQLite.SQLTransaction, error: SQLite.SQLError) => {
-          reject(error);
-          return false;
-        }
-      );
-    });
-  });
-};
-
-// Agregar nuevo scan
-export const addScan = (scanData: Omit<ScanRecord, 'id'|'created_at'>): Promise<ScanRecord> => {
-  return new Promise((resolve, reject) => {
-    db.transaction((tx: SQLite.SQLTransaction) => {
-      tx.executeSql(
-        `INSERT INTO scans (qr_data, latitude, longitude, altitude, accuracy, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?);`,
-        [
-          scanData.qr_data,
-          scanData.latitude || null,
-          scanData.longitude || null,
-          scanData.altitude || null,
-          scanData.accuracy || null,
-          scanData.timestamp
-        ],
-        (_: SQLite.SQLTransaction, { insertId }: { insertId: number }) => {
+// Obtener scans con verificación de inicialización
+export const getScans = async (): Promise<ScanRecord[]> => {
+  try {
+    await initDatabase(); // Asegurar que la DB esté inicializada
+    const database = getDatabase();
+    
+    return new Promise((resolve, reject) => {
+      database.transaction(
+        tx => {
           tx.executeSql(
-            'SELECT * FROM scans WHERE id = ?;',
-            [insertId],
-            (_: SQLite.SQLTransaction, { rows }: { rows: { _array: ScanRecord[] } }) => resolve(rows._array[0]),
-            (_: SQLite.SQLTransaction, error: SQLite.SQLError) => {
+            'SELECT * FROM scans ORDER BY timestamp DESC;',
+            [],
+            (_, result) => resolve(result.rows._array as ScanRecord[]),
+            (_, error) => {
+              console.error('Query error:', error);
               reject(error);
-              return false;
+              return true;
             }
           );
         },
-        (_: SQLite.SQLTransaction, error: SQLite.SQLError) => {
+        error => {
+          console.error('Transaction error:', error);
           reject(error);
-          return false;
         }
       );
     });
-  });
+  } catch (error) {
+    console.error('Error in getScans:', error);
+    throw error;
+  }
 };
 
-// Eliminar un scan
-export const deleteScan = (id: number): Promise<boolean> => {
-  return new Promise((resolve) => {
-    db.transaction((tx: SQLite.SQLTransaction) => {
-      tx.executeSql(
-        'DELETE FROM scans WHERE id = ?;',
-        [id],
-        () => resolve(true),
-        () => resolve(false)
+// Guardar scan con verificación mejorada
+export const addScan = async (
+  scanData: Omit<ScanRecord, 'id' | 'created_at'>
+): Promise<number> => {
+  try {
+    await initDatabase(); // Asegurar que la DB esté inicializada
+    const database = getDatabase();
+    
+    return new Promise((resolve, reject) => {
+      database.transaction(
+        tx => {
+          tx.executeSql(
+            `INSERT INTO scans (qr_data, latitude, longitude, altitude, accuracy, timestamp)
+             VALUES (?, ?, ?, ?, ?, ?);`,
+            [
+              scanData.qr_data,
+              scanData.latitude ?? null,
+              scanData.longitude ?? null,
+              scanData.altitude ?? null,
+              scanData.accuracy ?? null,
+              scanData.timestamp,
+            ],
+            (_, result) => {
+              if (result.insertId) {
+                resolve(result.insertId);
+              } else {
+                reject(new Error('No se obtuvo ID de inserción'));
+              }
+            },
+            (_, error) => {
+              console.error('Insert error:', error);
+              reject(error);
+              return true;
+            }
+          );
+        },
+        error => {
+          console.error('Transaction error:', error);
+          reject(error);
+        }
       );
     });
-  });
+  } catch (error) {
+    console.error('Error in addScan:', error);
+    throw error;
+  }
 };
 
-// Tipo para TypeScript
+// Eliminar scan mejorado
+export const deleteScan = async (id: number): Promise<boolean> => {
+  try {
+    await initDatabase();
+    const database = getDatabase();
+    
+    return new Promise((resolve, reject) => {
+      database.transaction(
+        tx => {
+          tx.executeSql(
+            'DELETE FROM scans WHERE id = ?;',
+            [id],
+            (_, result) => resolve(result.rowsAffected > 0),
+            (_, error) => {
+              console.error('Delete error:', error);
+              reject(error);
+              return true;
+            }
+          );
+        },
+        error => {
+          console.error('Transaction error:', error);
+          reject(error);
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error in deleteScan:', error);
+    throw error;
+  }
+};
+
+// Interface mejorada
 export interface ScanRecord {
   id: number;
   qr_data: string;
